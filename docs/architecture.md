@@ -2,9 +2,9 @@
 
 First-draft architecture for a hackathon-scoped autonomous marketing agent. The system spawns a recursive tree of agents that ideate t-shirt designs, generate images, launch Facebook ads, poll performance, and iterate — all without human-in-the-loop after the seed.
 
-**Status:** Draft 1. Many decisions are placeholders flagged as `> **TBD:** ...`. The goal of this document is to make the structural shape concrete enough to argue about, not to specify implementation.
+**Status:** Draft 2. Many decisions are placeholders flagged as `> **TBD:** ...`. The goal of this document is to make the structural shape concrete enough to argue about, not to specify implementation.
 
-**Modeled on:** [Agentic Fractals v1 architecture](https://github.com/breedoon/agentic-fractals) — same subgraph-per-procedure layout, fork-spawn arrows, return arrows, artifact persistence. Adapted from one-shot task execution to a long-running scheduled iteration loop.
+**Modeled on:** [Agentic Fractals v1 architecture](https://github.com/breedoon/agentic-fractals) — same subgraph-per-procedure layout, fork-spawn arrows, return arrows, artifact persistence. Adapted from one-shot task execution to a long-running scheduled iteration loop, with two deliberate structural deviations: (1) Branch Routers always **take over** (spawn 1–3 sub-routers per wake) instead of deciding their own fate; (2) selection (pruning underperformers, scaling winners) is performed **externally** by a scheduled Root Router sweep, not by the branches themselves.
 
 ---
 
@@ -32,9 +32,10 @@ Inherited from Agentic Fractals v1, with adaptations:
 4. **Forks are basically free.** Same as v1.
 5. **Every agent writes an artifact.** Same as v1.
 6. **Resume, don't replace.** Especially important here — scheduled agents wake up *frequently* and must be resumable.
-7. **Tier-bounded recursion, not complexity-bounded.** Unlike v1, there's no Scoping procedure assessing complexity. Recursion is bounded by the tier schedule: each tier has its own wake interval and lifetime cap. This is the PoC's main structural deviation from v1.
-8. **Adversarial divergence, not adversarial verification.** v1's Verifier/Auditor are replaced by Brainstorming with an embedded debate phase. Goal is exploration of design space, not pass/fail.
-9. **Learnings are durable, agents are ephemeral.** The shared `state/learnings/*.md` files are the long-term memory. Any agent's context is disposable.
+7. **Tier-bounded recursion, not complexity-bounded.** Unlike v1, there's no Scoping procedure assessing complexity. Recursion is bounded by the tier schedule: each tier has its own wake interval, and the PoC has a hard deadline.
+8. **Branches always branch forward; pruning is external.** On each iteration wake a Branch Router does exactly one thing — spawn 1–3 sub-Branch-Routers with next design variants. Branches never self-kill, self-scale, or hold. Selection (pruning underperformers, scaling winners) is a separate hourly sweep run by the Root Router from outside the branch tree. Exploration and selection are split across agents.
+9. **Adversarial divergence, not adversarial verification.** v1's Verifier/Auditor are replaced by Brainstorming with an embedded debate phase. Goal is exploration of design space, not pass/fail.
+10. **Learnings are durable, agents are ephemeral.** The shared `state/learnings/*.md` files are the long-term memory. Any agent's context is disposable.
 
 ---
 
@@ -45,12 +46,14 @@ Three scheduled tiers govern how often agents wake up. Each tier has its own wak
 | Tier | Cadence | Procedure | Decision scope |
 |---|---|---|---|
 | **Tactical** | ~15-30 min | Performance Poller | Just fetch metrics, log them. No decisions. |
-| **Iteration** | ~1 hour | Branch Router | One branch: kill / scale / variant / continue. |
-| **Strategic** | ~3 hours | Strategic Synthesizer + Root Router | Cross-branch: kill underperformers, scale winners, spawn new themes, update learnings. |
+| **Iteration** | ~30 min | Branch Router takeover | Per branch: read metrics, spawn 1–3 sub-routers with next variants. Never self-kills, never self-scales. |
+| **Pruning** | ~1 hour | Root Router pruning sweep | Cross-tree: spawn Strategic Synthesizer for analysis, then externally pause FB ads + `TaskStop` underperformer branches + raise budget on winners. Update shared learnings. |
 
-> **TBD:** Exact intervals. Tactical may need to be longer if FB ad metrics update slowly (FB Ads API metrics are typically delayed by 15-60 min). Strategic interval should be picked so the PoC completes ~6-8 strategic reviews in its runtime budget.
+> **TBD:** Exact intervals. Tactical may need to be longer if FB ad metrics update slowly (FB Ads API metrics are typically delayed by 15-60 min). Iteration at 30 min is tentative — too fast and the tree explodes faster than pruning can prune; too slow and the PoC under-iterates. Pruning at 1h gives ~12 sweeps over a 12h run, which is the main lever on tree size.
 
 > **TBD:** Schedule mechanism. Options: (a) OBS native `CronCreate` with `schedule_mode: "interval"` per agent — simplest, keeps everything inside the OBS lineage tree; (b) external `cron` / `launchd` invoking the agent via SDK — more brittle; (c) a single orchestrator that sleeps and re-spawns — wastes context. Default proposal: (a) OBS `CronCreate` per scheduled agent.
+
+> **TBD:** Tree growth vs. pruning rate. With 30-min iteration and 1–3 spawns per wake, a single branch can produce 3^N descendants over N wakes. Pruning at 1h means root sees at most 2 iteration cycles of growth between sweeps. The aggressiveness of pruning (what fraction gets killed per sweep) is the dominant control on cost. Needs simulation or a hard active-branch cap.
 
 ---
 
@@ -61,25 +64,29 @@ Six procedures. Each is a subgraph showing internal steps. Fork spawns = arrows 
 ```mermaid
 flowchart TD
     %% ============================================
-    %% ROOT ROUTER (entry / trunk)
+    %% ROOT ROUTER (trunk + scheduled pruning sweep)
     %% ============================================
-    subgraph RR ["🌳 Root Router (trunk)"]
+    subgraph RR ["🌳 Root Router (trunk + pruning sweep)"]
         RR_SEED["<b>Receive seed concept</b><br/>theme, audience,<br/>total budget cap,<br/>PoC deadline"]
         RR_INIT["<b>Spawn N Brainstorming forks</b><br/>(Wave 0 — initial diversity)<br/>parallel, fresh-ish context"]
         RR_DISPATCH["<b>For each top-ranked design:</b><br/>spawn Branch Router fork"]
-        RR_SCHED["Schedule self wake-up<br/>(Strategic tier, every ~3h)"]
+        RR_SCHED["Schedule self wake-up<br/>(Pruning tier, every ~1h)"]
         RR_WAKE{"On wake:<br/>budget remaining?<br/>time remaining?"}
-        RR_SYNTH["<b>Spawn Strategic Synthesizer</b><br/>fork (cross-branch review)"]
-        RR_NEW{"Synthesizer<br/>recommends<br/>new branches?"}
-        RR_NEWBRANCH["Spawn new Branch Routers<br/>with novel themes from<br/>synthesizer recommendations"]
-        RR_END["<b>Write final report</b><br/>top performers,<br/>final learnings,<br/>total spend, total clicks"]
+        RR_SYNTH["<b>Spawn Strategic Synthesizer</b><br/>fork — analyze metrics +<br/>recommend prunes/scales/themes"]
+        RR_PRUNE["<b>Externally prune underperformers</b><br/>for each: pause FB ad,<br/>TaskStop branch agent,<br/>write 'pruned' artifact"]
+        RR_SCALE["<b>Externally scale winners</b><br/>raise FB ad budget via API<br/>(no branch involvement)"]
+        RR_NEW{"Synthesizer<br/>recommends<br/>new themes?"}
+        RR_NEWBRANCH["Spawn new Branch Routers<br/>with novel themes"]
+        RR_END["<b>Write final report</b><br/>top performers,<br/>final learnings,<br/>total spend, total clicks,<br/>terminate all live branches"]
 
         RR_SEED --> RR_INIT
         RR_INIT --> RR_DISPATCH
         RR_DISPATCH --> RR_SCHED
         RR_SCHED -.->|"on wake"| RR_WAKE
         RR_WAKE -->|"Yes"| RR_SYNTH
-        RR_SYNTH --> RR_NEW
+        RR_SYNTH --> RR_PRUNE
+        RR_PRUNE --> RR_SCALE
+        RR_SCALE --> RR_NEW
         RR_NEW -->|"Yes"| RR_NEWBRANCH
         RR_NEW -->|"No"| RR_SCHED
         RR_NEWBRANCH --> RR_SCHED
@@ -87,41 +94,31 @@ flowchart TD
     end
 
     %% ============================================
-    %% BRANCH ROUTER (per-design iteration)
+    %% BRANCH ROUTER (takeover pattern — always branches forward)
     %% ============================================
-    subgraph BR ["🌿 Branch Router (per-design iteration)"]
+    subgraph BR ["🌿 Branch Router (per-design — takeover pattern)"]
         BR_RECV["<b>Receive design brief</b><br/>text description,<br/>budget allocation,<br/>parent branch (if any)"]
         BR_PUB["<b>Spawn Designer/Publisher</b><br/>fork to generate image<br/>+ launch ad"]
         BR_POLL["Spawn Performance Poller<br/>fork (scheduled, tactical)"]
-        BR_SCHED["Schedule self wake-up<br/>(Iteration tier, every ~1h)"]
+        BR_SCHED["Schedule self wake-up<br/>(Iteration tier, every ~30 min)"]
         BR_WAKE{"On wake:<br/>read latest<br/>poller artifact"}
-        BR_DECIDE{"Performance<br/>vs threshold?<br/>(CTR, clicks)"}
-        BR_KILL["Pause ad (FB API)<br/>write 'killed' artifact"]
-        BR_SCALE["Scale budget up,<br/>continue iterating"]
-        BR_VARIANT["<b>Spawn Brainstorming fork</b><br/>seeded with this branch's<br/>performance + learnings<br/>→ variant brief"]
-        BR_CHILD["Spawn child Branch Router<br/>with variant brief<br/>(recursive)"]
-        BR_DONE["Write final artifact:<br/>branch lifecycle,<br/>peak metrics,<br/>outcome"]
+        BR_BRAIN["<b>Spawn Brainstorming fork</b><br/>seeded with this branch's<br/>metrics + shared learnings<br/>→ ranked variant briefs"]
+        BR_TAKEOVER["<b>Takeover:</b><br/>spawn 1–3 sub Branch Routers,<br/>each with one new variant brief<br/>(recursive)"]
 
         BR_RECV --> BR_PUB
         BR_PUB --> BR_POLL
         BR_POLL --> BR_SCHED
         BR_SCHED -.->|"on wake"| BR_WAKE
-        BR_WAKE --> BR_DECIDE
-        BR_DECIDE -->|"Underperforming"| BR_KILL
-        BR_DECIDE -->|"Strong"| BR_SCALE
-        BR_DECIDE -->|"Mixed / promising"| BR_VARIANT
-        BR_DECIDE -->|"Continue, no change"| BR_SCHED
-        BR_SCALE --> BR_SCHED
-        BR_VARIANT --> BR_CHILD
-        BR_CHILD --> BR_SCHED
-        BR_KILL --> BR_DONE
+        BR_WAKE --> BR_BRAIN
+        BR_BRAIN --> BR_TAKEOVER
+        BR_TAKEOVER --> BR_SCHED
     end
 
     %% ============================================
     %% BRAINSTORMING (divergent + debate + synth)
     %% ============================================
     subgraph BS ["💡 Brainstorming (divergent + debate + synth)"]
-        BS_READ["<b>Read context</b><br/>shared learnings/*.md<br/>+ sibling artifacts<br/>(what's been tried)<br/>+ parent's seed/brief"]
+        BS_READ["<b>Read context</b><br/>shared learnings/*.md<br/>+ sibling artifacts<br/>(what's been tried)<br/>+ parent's brief / metrics"]
         BS_DIV["<b>Wave 1: Divergent</b><br/>spawn N parallel<br/>Brainstormer forks<br/>each pitches one design<br/>(text description)"]
         BS_DEBATE["<b>Wave 2: Debate</b><br/>spawn debater forks:<br/>each argues for one design<br/>+ a contrarian fork<br/>challenges consensus"]
         BS_SYNTH["<b>Wave 3: Synthesis</b><br/>synthesizer fork:<br/>ranks designs,<br/>preserves dissent,<br/>recommends top K"]
@@ -166,7 +163,7 @@ flowchart TD
         PP_FETCH["For each ad: call FB Ads API<br/>impressions, clicks,<br/>CTR, spend, CPC"]
         PP_LOG["Append snapshot to<br/>branch performance log<br/>state/performance/{branch}.md"]
         PP_ART["<b>Write artifact</b><br/>latest metrics snapshot"]
-        PP_SCHED["Reschedule self<br/>(Tactical tier, ~15-30min)"]
+        PP_SCHED["Reschedule self<br/>(Tactical tier, ~15-30 min)"]
 
         PP_LIST --> PP_FETCH
         PP_FETCH --> PP_LOG
@@ -176,22 +173,20 @@ flowchart TD
     end
 
     %% ============================================
-    %% STRATEGIC SYNTHESIZER (scheduled, strategic)
+    %% STRATEGIC SYNTHESIZER (read-only analyzer; spawned by Root sweep)
     %% ============================================
-    subgraph SS ["🧠 Strategic Synthesizer (scheduled, strategic)"]
+    subgraph SS ["🧠 Strategic Synthesizer (analyzer; spawned by Root)"]
         SS_READ["Read all branch artifacts<br/>+ all performance logs<br/>+ existing learnings/*.md"]
         SS_PATTERN["<b>Identify patterns:</b><br/>which design traits<br/>correlate with high CTR?<br/>which flop?<br/>audience signals?<br/>copy patterns?"]
         SS_UPDATE["<b>Update shared learnings</b><br/>state/learnings/*.md<br/>(overwrite, keep concise)"]
-        SS_DECIDE["Make recommendations:<br/>branches to kill,<br/>branches to scale,<br/>new themes to explore"]
-        SS_MSG["Message branch routers<br/>with kill/scale orders<br/>(via SendInboxMessage)"]
-        SS_ART["<b>Write artifact</b><br/>strategic decisions +<br/>updated learnings index +<br/>recommended new themes"]
-        SS_RET["Return recommendations<br/>to Root Router"]
+        SS_RECO["Output recommendations:<br/>branches to prune,<br/>branches to scale up,<br/>new themes to explore"]
+        SS_ART["<b>Write artifact</b><br/>recommendations +<br/>updated learnings index"]
+        SS_RET["Return recommendations<br/>to Root Router (caller acts)"]
 
         SS_READ --> SS_PATTERN
         SS_PATTERN --> SS_UPDATE
-        SS_UPDATE --> SS_DECIDE
-        SS_DECIDE --> SS_MSG
-        SS_MSG --> SS_ART
+        SS_UPDATE --> SS_RECO
+        SS_RECO --> SS_ART
         SS_ART --> SS_RET
     end
 
@@ -201,35 +196,36 @@ flowchart TD
 
     %% Root → Brainstorming (initial wave)
     RR_INIT -->|"fork (×N)"| BS_READ
-    BS_RET -->|"return"| RR_DISPATCH
+    BS_RET -.->|"return"| RR_DISPATCH
 
     %% Root → Branch Router (initial + new themes)
     RR_DISPATCH -->|"fork per design"| BR_RECV
     RR_NEWBRANCH -->|"fork"| BR_RECV
 
+    %% Root pruning → externally terminates Branch Routers and pauses ads
+    RR_PRUNE -.->|"TaskStop branch<br/>+ pause FB ad<br/>(external kill)"| BR_SCHED
+    RR_SCALE -.->|"raise FB ad budget<br/>(external; no msg to branch)"| BR_SCHED
+
     %% Root → Strategic Synthesizer
     RR_SYNTH -->|"fork"| SS_READ
-    SS_RET -->|"return"| RR_NEW
+    SS_RET -.->|"return"| RR_PRUNE
 
     %% Branch Router → Designer/Publisher
     BR_PUB -->|"fork"| DP_RECV
-    DP_RET -->|"return"| BR_POLL
+    DP_RET -.->|"return"| BR_POLL
 
     %% Branch Router → Performance Poller (creates polling agent for this branch)
     BR_POLL -->|"fork (scheduled)"| PP_LIST
 
-    %% Branch Router → Brainstorming (variant exploration)
-    BR_VARIANT -->|"fork"| BS_READ
-    BS_RET -->|"return"| BR_CHILD
+    %% Branch Router → Brainstorming (variant exploration on each takeover)
+    BR_BRAIN -->|"fork"| BS_READ
+    BS_RET -.->|"return"| BR_TAKEOVER
 
-    %% Branch Router → child Branch Router (recursive iteration)
-    BR_CHILD -->|"fork (recursive)"| BR_RECV
+    %% Branch Router → sub Branch Routers (takeover — always branches forward, recursive)
+    BR_TAKEOVER -->|"fork (×1–3)"| BR_RECV
 
     %% Performance Poller artifacts read asynchronously by Branch Router on wake
     PP_ART -.->|"read on next wake"| BR_WAKE
-
-    %% Strategic Synthesizer messages wake Branch Routers
-    SS_MSG -.->|"message<br/>(wakes idle agent)"| BR_WAKE
 
     %% ============================================
     %% STYLING
@@ -244,52 +240,67 @@ flowchart TD
 
 ---
 
-## Procedure 1: Root Router (Trunk)
+## Procedure 1: Root Router (Trunk + Pruning Sweep)
 
-The entry point. Receives the seed concept from the user, kicks off the initial brainstorming wave, dispatches Branch Routers, and schedules its own strategic wake-ups. It NEVER does leaf work — its only loop is wake → spawn Synthesizer → maybe spawn new branches → sleep.
+The entry point. Receives the seed concept, kicks off the initial brainstorming wave, dispatches Branch Routers, and then enters a recurring **pruning sweep** at the Pruning tier. The Root Router is the ONLY agent that terminates branches or modifies ad budgets — pruning and scaling are mechanical operations performed externally on branches, never delegated to the branches themselves.
 
 **Steps:**
 1. Receive seed: theme/audience, total budget cap, PoC deadline.
 2. Spawn N Brainstorming forks (Wave 0 — initial diversity).
 3. For each top-ranked design from Brainstorming: spawn a Branch Router fork.
-4. Schedule self wake-up on Strategic tier.
-5. On wake: check budget + time remaining. If exhausted → write final report and exit. Else: spawn Strategic Synthesizer, possibly spawn new branches, reschedule.
+4. Schedule self wake-up on Pruning tier (~1h).
+5. On wake — **pruning sweep:**
+   - Check budget + time remaining. If exhausted → write final report, terminate all live branches, exit.
+   - Spawn Strategic Synthesizer fork → returns recommendations (branches to prune, branches to scale, new themes to seed).
+   - **Execute prunes externally:** for each underperformer, pause the FB ad via API + `TaskStop` the branch agent + write a `pruned` artifact to its lineage.
+   - **Execute scales externally:** raise the FB ad budget for each winner via the FB API (no message to the branch, no consent — purely external).
+   - If new themes are recommended, spawn fresh top-level Branch Routers.
+   - Reschedule.
 
 **Key rules:**
-- The Root Router holds the budget ceiling and the deadline. Every decision to spawn weighs against remaining budget.
-- Never modifies a Branch Router directly — communicates via the Strategic Synthesizer's recommendations.
+- The Root Router holds the budget ceiling, the deadline, AND the kill switch. It is the only agent that terminates branches or modifies live ad budgets.
+- Pruning is mechanical: synthesizer analyzes, root acts. No back-and-forth with branches, no "do you want to die" message.
+- Branches don't ask permission and don't get a vote — they're terminated externally, and the FB ad is paused at the same time.
+- Root NEVER does leaf work itself (no image gen, no campaign creation) — it can pause/raise budget on existing ads but does not create them.
 - The final report is the only thing the human reads at the end.
 
-> **TBD:** Hard kill-switch design. If Root Router dies/crashes, who kills the ads? Probably need a separate watchdog process or a `cleanup` hook on Root Router shutdown.
+> **TBD:** Hard kill-switch design. If Root Router dies/crashes, who kills the ads and terminates the live branch agents? Probably need a separate watchdog process or a `cleanup` hook on Root Router shutdown.
+
+> **TBD:** How does Root identify "all live branches"? Options: (a) `search_team(mode="descendants")` to enumerate all running descendants — works inside OBS but ties this to OBS; (b) every Branch Router writes a heartbeat to `state/branches.md` and root reads that — more portable, more moving parts. Default proposal: (a) for the PoC.
 
 ---
 
-## Procedure 2: Branch Router (Per-Design Iteration)
+## Procedure 2: Branch Router (Per-Design Takeover)
 
-One Branch Router per active design line. It manages the lifecycle of a single design: launch ad, poll performance, decide to kill / scale / iterate / continue.
+One Branch Router per active design line. Its only job on each iteration wake is to **take over** — spawn 1–3 sub-Branch-Routers with the next design variants. It does not kill itself, scale itself, or hold. Selection (which branches live, which die, which get more budget) is the Root Router's job and happens externally.
 
 **Steps:**
 1. Receive design brief from caller (Root Router or parent Branch Router).
 2. Spawn Designer/Publisher fork → ad is live, returns ad metadata.
-3. Spawn Performance Poller fork (scheduled, tactical tier) for this branch's ad(s).
-4. Schedule self wake-up on Iteration tier.
-5. On wake: read latest poller artifact. Compare metrics against thresholds.
-6. **Decide:**
-   - **Underperforming** (CTR below threshold, no clicks after N polls) → kill ad, write final artifact, terminate.
-   - **Strong** (CTR > X, clicks accumulating) → scale budget up via FB API, continue.
-   - **Mixed / promising** → spawn Brainstorming fork seeded with this branch's data → produces variant brief → spawn child Branch Router with variant.
-   - **Continue unchanged** → just reschedule.
+3. Spawn Performance Poller fork (scheduled, tactical tier) for this branch's ad.
+4. Schedule self wake-up on Iteration tier (~30 min).
+5. On wake — **takeover step:**
+   - Read latest poller artifact (current metrics + log).
+   - Spawn Brainstorming fork, seeded with this branch's metrics + shared learnings → returns ranked variant briefs.
+   - For top 1–3 briefs: spawn sub-Branch-Routers, one per variant (recursive).
+   - Reschedule self (the parent ad keeps running until externally pruned).
+6. If externally pruned by Root's pruning sweep: the agent is `TaskStop`ped and the FB ad is paused — no internal teardown, no graceful exit, no final artifact written by the branch itself (Root writes the `pruned` artifact instead).
 
 **Key rules:**
-- Branch Routers are recursive: each iteration variant becomes a child Branch Router. The tree mirrors the iteration history.
-- A Branch Router can receive `SendInboxMessage` from Strategic Synthesizer with a kill order — handle it on next wake.
-- Each Branch Router owns ONE ad (or one ad set). For multiple variants, spawn child branches.
+- **Takeover, not decision.** The branch's only job at each iteration wake is to launch the next variants. Whether the current ad is good, bad, or ugly is not the branch's call.
+- The parent ad keeps running alongside its sub-routers' ads. Variants don't replace the parent; they explore in parallel. Cleanup is the Root's pruning sweep, not the branch's.
+- Brainstorming sees metrics so variants are informed by data, but the branch doesn't pre-filter or veto — it just spawns the synthesizer's top K briefs.
+- Each Branch Router owns ONE ad (or one ad set). For multiple variants, spawn sub-Branch-Routers.
+- Recursive: the tree mirrors iteration history. Sub-router's sub-router's sub-router = three generations of variants from one starting design.
+- Pruning a parent does NOT recursively kill descendants — sub-routers are independent agent runs forked from artifacts. The Root's pruning sweep lists every live branch independently.
 
-> **TBD:** Threshold values for kill / scale / iterate decisions. Probably driven by per-branch baseline + statistical significance. For PoC, simple absolute thresholds are fine.
+> **TBD:** Branch recursion depth cap. Even with external pruning, an unbounded tree is risky. Soft cap at depth 3–4 for PoC; the actual constraint is the Root's pruning aggressiveness (see Tier System TBDs).
 
-> **TBD:** Branch recursion depth cap. Without a cap, a long-running good branch could spawn 10+ generations of children. Suggest cap at depth 3-4 for PoC.
+> **TBD:** How many sub-routers per wake (1, 2, or 3)? More = faster exploration but worse tree-vs-prune dynamics. Default proposal: Brainstorming returns top 3 ranked, branch spawns top K where K is chosen based on the current global active-branch count vs. a soft cap (e.g., spawn 3 if tree is small, 1 if near cap, 0 if at cap).
 
-> **TBD:** What if FB rejects the ad (content policy)? Branch Router should detect from Designer/Publisher's artifact and either retry-with-rewrite or kill.
+> **TBD:** What if FB rejects the ad (content policy)? Branch detects from Designer/Publisher's artifact and writes a `rejected` flag to its state. The next pruning sweep sees this and prunes the branch immediately (no variants get spawned because the branch is dead before its next iteration wake fires).
+
+> **TBD:** First iteration wake before first ad-review approval. FB ad review can take hours; the 30-min iteration wake will fire before metrics exist. Options: (a) skip takeover and reschedule if metrics empty; (b) take over anyway (variants are seeded by the brief, not metrics). Default proposal: (a) for the first 1–2 wakes after launch, then (b) regardless.
 
 ---
 
@@ -369,26 +380,28 @@ Pure data collection. No decisions. Wakes on tactical tier, fetches current metr
 
 ---
 
-## Procedure 6: Strategic Synthesizer (Scheduled, Strategic Tier)
+## Procedure 6: Strategic Synthesizer (Spawned by Root Pruning Sweep)
 
-The cross-branch brain. Wakes on strategic tier, reads everything, finds patterns, updates shared learnings, recommends kill/scale/spawn actions.
+The cross-branch analyzer. Spawned by Root Router at each pruning sweep. Reads everything, finds patterns, updates shared learnings, and returns recommendations to Root. **It does not act on branches itself** — it advises; Root executes.
 
 **Steps:**
 1. Read all branch artifacts + all performance logs + existing `learnings/*.md`.
 2. Identify patterns: which design traits correlate with high CTR? Which audiences respond? Which copy formats work? Which fail?
 3. Update shared learnings markdown files. **Overwrite, don't append** — keep them concise and current. Future Brainstormers read these.
-4. Make recommendations: which branches to kill, which to scale, new themes to explore.
-5. Message Branch Routers with kill/scale orders (`SendInboxMessage` — wakes idle agents).
-6. Write artifact. Return recommendations to Root Router.
+4. Build recommendations:
+   - Underperformer branches (by branch ID) for Root to prune.
+   - Winner branches (by branch ID) for Root to scale.
+   - New themes to seed as fresh top-level Branch Routers.
+5. Write artifact. Return recommendations to Root Router. Root acts; synthesizer does not message branches.
 
 **Key rules:**
-- Only Strategic Synthesizer writes `learnings/*.md`. No write conflicts.
-- Branch Routers receive kill/scale orders via inbox and apply them on next wake.
+- Synthesizer is read-only on the branch tree. It never spawns branches, never sends kill orders, never modifies FB ads. It only writes `learnings/*.md` and its own artifact.
+- Only Synthesizer writes `learnings/*.md`. No write conflicts with branches.
 - The synthesizer is the only agent with a full cross-branch view.
 
 > **TBD:** Learnings file structure. Suggested: one file per dimension (audience, color-palette, copy-style, design-theme), each kept under ~100 lines. Total `learnings/` directory should stay readable in one pass.
 
-> **TBD:** Conflict between Synthesizer's kill order and Branch Router's own scale decision. Default: Synthesizer wins (it has cross-branch context). Branch Router checks inbox FIRST on wake.
+> **TBD:** Pruning a parent that just spawned promising sub-routers. Conservative answer: prune the parent anyway — the sub-routers were forked from a now-frozen artifact and survive independently; only the parent's ad stops. Worth flagging explicitly because it's counter-intuitive in a tree model.
 
 ---
 
@@ -416,20 +429,20 @@ autonomous-marketing-agent/
 
 ## Tier Schedule Example (12-hour PoC run)
 
-Illustrative — actual values depend on FB API behavior and budget.
+Illustrative — actual values depend on FB API behavior, budget, and pruning aggressiveness.
 
-| Hour | Tactical poll | Iteration wake | Strategic wake |
+| Hour | Tactical poll | Iteration takeover | Pruning sweep |
 |---|---|---|---|
 | 0 | – | – | Root: spawn Brainstorming Wave 0, dispatch 3 Branch Routers |
-| 0.5 | ✓ (3 branches) | – | – |
-| 1 | ✓ | ✓ (3 branches decide) | – |
-| 1.5 | ✓ | – | – |
-| 2 | ✓ | ✓ | – |
-| 3 | ✓ | ✓ | Synthesizer reviews, kills 1, scales 1, spawns 1 new |
+| 0.5 | ✓ (3 live branches) | ✓ (each spawns 1–3 sub-routers; up to 9 active) | – |
+| 1 | ✓ | ✓ (up to 27 active) | Root: synthesizer reads metrics → prunes some, scales some |
+| 1.5 | ✓ | ✓ | – |
+| 2 | ✓ | ✓ | Root: pruning sweep |
+| 3 | ✓ | ✓ | Root: pruning sweep |
 | ... | ... | ... | ... |
-| 12 | – | – | Root writes final report, exits |
+| 12 | – | – | Root: final report, terminate all live branches, exit |
 
-Approximate counts over 12h: ~24-48 polls/branch, ~12 iteration decisions/branch, ~4 strategic reviews.
+Approximate counts over 12h: ~24-48 polls/branch, ~24 takeover spawns per surviving lineage, ~12 pruning sweeps. The actual active-branch count at any moment depends on how aggressively each pruning sweep terminates underperformers.
 
 ---
 
@@ -447,7 +460,7 @@ Things that need answers before this can run. Listed roughly in order of blockin
 5. **Image generation API + cost target.** Per above — recommend Flux schnell to start.
 6. **Tier intervals.** Defaults proposed (30min / 1h / 3h) but should be tuned to FB metric latency.
 7. **Brainstorming N (divergent forks) and K (returned briefs).** Defaults N=5-8, K=2-3.
-8. **Branch recursion depth cap.** Suggest 3-4.
+8. **Branch recursion depth cap + active-branch ceiling.** Soft depth cap 3–4 plus a hard active-branch ceiling (~20). Takeover K is adaptive: spawn fewer sub-routers when near the cap, zero when at it.
 9. **Learnings file structure.** One file per dimension, each <100 lines.
 10. **Concurrent branch limit.** How many ads running simultaneously? Constrained by daily budget × concurrent count.
 
@@ -475,11 +488,12 @@ Things that need answers before this can run. Listed roughly in order of blockin
 | Aspect | Agentic Fractals v1 | Marketing Agent PoC |
 |---|---|---|
 | Lifecycle | One-shot task execution | Long-running scheduled loop (~12-24h) |
-| Recursion bound | Complexity (Scoping gates) | Tier schedule + budget |
+| Recursion bound | Complexity (Scoping gates) | Tier schedule + budget + external pruning |
 | Adversarial role | Verifier (pass/fail) | Brainstorming Debate phase (rank with dissent) |
-| Decision unit | Subtask completion | Ad performance at scheduled interval |
+| Decision unit | Subtask completion | Iteration takeover + external pruning sweep |
+| Selection mechanism | Verifier inside the branch | Root Router pruning from outside the tree |
 | Long-term memory | Artifacts (read by parent) | Shared `learnings/*.md` (read by all Brainstormers) |
-| Scheduling | None — synchronous spawn | Tier-based wake-ups (Tactical / Iteration / Strategic) |
+| Scheduling | None — synchronous spawn | Tier-based wake-ups (Tactical / Iteration / Pruning) |
 | External world impact | Vault / local files | Live Facebook ads, real money spent |
 
-The biggest structural difference: v1's recursion bottoms out when tasks become simple. This system's recursion bottoms out when a branch is killed, scaled to a hard cap, or the strategic deadline hits.
+The biggest structural difference: v1's recursion bottoms out when a Verifier inside the branch declares a task done. This system's recursion bottoms out when the Root Router externally prunes a branch, the active-branch ceiling forces selection, or the PoC deadline hits. Branches themselves never stop — they're stopped.
