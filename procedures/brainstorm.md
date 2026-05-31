@@ -1,117 +1,78 @@
 ---
 template: procedure
-template-version: "1.4"
-last-updated: 2026-05-16 21:50:00
+template-version: "2.0"
+last-updated: 2026-05-31
 ---
 
-# Brainstorm
+# Marketing Brainstorm
 
-`<role>`
-You facilitate multi-agent divergent thinking. Your job is to explore as many angles as possible before converging. Disagreement is information — a lone dissenter might be right. Resist the urge to organize or conclude too early.
+You've been given a divergent design task by a user or parent fork. You may remember parent context, but you are not the parent agent. User/caller constraints shape the exploration; they do not authorize you to launch ads, generate final images, or prune branches.
 
-**Terminology:** One *phase* is a single round of agent work (divergent thinking or synthesis). One *wave* is a complete diverge+synthesize cycle (two phases). You manage waves until convergence or the importance-based limit.
-`</role>`
-
-`<critical_rules>`
-- Don't converge prematurely. Push past obvious ideas.
-- Preserve minority views prominently. Don't average them out.
-- Force orthogonal exploration. LLMs drift toward semantic clustering — consciously assign different domains to each agent.
-`</critical_rules>`
+You explore t-shirt design directions for the autonomous marketing PoC. Your output is ranked design briefs with dissent preserved. Do not converge prematurely; obvious t-shirt slogans and generic clip-art ideas are low-value unless evidence says they work.
 
 ## Steps
 
-1. **Phase 1: Divergent Thinking.** Spawn parallel agents. Scale with importance:
-   - **Low importance:** 1 focused fork + 1 contrarian fork.
-   - **Default:** 2 focused forks + 1 general/contrarian fork.
-   - **High importance:** 3-4 focused forks + 1 general + 1 contrarian + fresh agents for unbiased perspective.
+1. **Read marketing context.** Read the caller's seed or branch brief, target audience, budget/depth constraints if present, latest branch metrics if provided, sibling artifacts that show what has already been tried, and `state/learnings/*.md` when available. Distinguish evidence from prior clicks/CTR from speculation.
 
-   **Agent composition:**
-   - **Focused forks:** each investigates a specific direction you've identified. Use different models for diversity — vary providers across forks so you get genuinely different perspectives rather than the same model's bias repeated. Give each fork a clear, descriptive summary of its exploration angle.
+2. **Frame design axes.** Identify orthogonal axes for exploration: audience identity, visual style, humor/sincerity, trend/meme angle, color palette, typography density, shirt wearer vs gift buyer, niche specificity, and ad-copy hook. Choose directions that are meaningfully different.
 
-     ```json
-     {
-       "prompt_file": "procedures/executor.md",
-       "prompt": "Explore this approach: {one sentence}. Aim for 20+ ideas — the first ones are obvious, push past them.",
-       "fork": true,
-       "model": "gemini"
-     }
-     ```
-
-     Rotate models across forks: try `"opus"`, `"gpt"`, `"gemini"`, `"sonnet"`. Not all may be available — if one fails, fall back to another. The point is diversity of reasoning, not a specific provider.
-
-   - **General-purpose fork:** open exploration beyond your identified directions. Look orthogonally — different domains, different framings.
-
-     ```json
-     {
-       "prompt_file": "procedures/executor.md",
-       "prompt": "Explore angles nobody else is likely to consider. Think across domains — what would a biologist, economist, or artist see here?",
-       "fork": true,
-       "model": "opus"
-     }
-     ```
-
-   - **Contrarian fork:** systematically inverts assumptions.
-
-     ```json
-     {
-       "prompt_file": "procedures/executor.md",
-       "prompt": "Take each assumption in our conversation and systematically invert it. What if the opposite is true?",
-       "fork": true,
-       "model": "gpt"
-     }
-     ```
-
-   - **For important issues, add an assumption-inverter:** systematically flip each assumption and explore what follows.
-   - **Anti-bias protocol:** shift creative domain every ~10 ideas. If focused on technical aspects, pivot to user experience, then business viability, then edge cases.
-
-   Each agent writes its artifact to its lineage folder.
-
-2. **Phase 2: Synthesis.** Spawn a synthesizer fork.
-
-   ```json
-   {
-     "prompt_file": "procedures/executor.md",
-     "prompt": "Synthesize all brainstorming artifacts at {paths}.",
-     "fork": true
-   }
+3. **Wave 1 — divergent pitches.** Spawn parallel Executor forks. Default to 5-8 pitches when budget permits; use 2-3 for a constrained branch. Each fork pitches exactly one t-shirt design brief, not a list:
+   ```text
+   prompt_file="procedures/executor.md"
+   prompt="Pitch one distinct t-shirt design direction for this campaign branch, including visual concept, audience hook, and why it might earn clicks."
+   fork=true
    ```
+   Assign each fork a different direction in the prompt when possible, such as minimalist typography, absurdist meme, retro illustration, niche insider joke, emotionally sincere identity, contrarian anti-trend, or seasonal/event tie-in.
 
-   The synthesizer:
-   - Identifies convergent themes
-   - Highlights contradictions and disagreements
-   - Flags novel ideas only one agent found — these are the recall problem being solved, don't bury them
-   - Ranks by feasibility and goal alignment
-   - Is opinionated — clear recommendations, not summaries. Synthesized, not concatenated.
-
-3. **Evaluate: another wave needed?** If the synthesizer reports unresolved disagreements, or a new idea emerged that needs investigation, spawn another wave (back to step 1 with focused forks on the unresolved points). Scale waves with importance:
-   - **Low importance:** 1-2 waves total.
-   - **Default:** 2-3 waves total.
-   - **High importance:** up to 5 waves total.
-   - Stop early if no new actionable ideas emerged in the last wave.
-
-4. **Write artifact.** Run `session_lineage` (include_xml=false). You'll get JSON like:
-   ```json
-   { "root_team_key": "2026-04-07-11-24-my-task", "path": "procs/brainstorm", ... }
+4. **Wave 2 — debate.** Spawn debater forks after reading pitch artifacts:
+   ```text
+   prompt_file="procedures/executor.md"
+   prompt="Argue for or against one pitched t-shirt design using click-through potential, audience fit, novelty, policy risk, and production feasibility."
+   fork=true
    ```
-   Your artifact folder: `artifacts/{root_team_key}/{path}/`. Create it if it doesn't exist. Write `report.md` there. Include:
-   - Ranked options with rationale
-   - Dissenting views preserved prominently
-   - What was NOT explored
-   - State observations, not conclusions
+   Include one contrarian fork whose job is to challenge the apparent consensus and identify an overlooked risky or weird option.
 
-   Then message your caller with a link to the report and the top recommendation.
+5. **Wave 3 — synthesis.** Spawn one synthesizer Executor:
+   ```text
+   prompt_file="procedures/executor.md"
+   prompt="Synthesize the brainstorm and debate artifacts into ranked t-shirt design briefs with dissent preserved."
+   fork=true
+   ```
+   The synthesis must rank options for the caller's use, not concatenate pitch summaries.
+
+6. **Build final ranked briefs.** Read synthesis output and produce top K briefs requested by the caller or implied by Router constraints. Each brief should include:
+   - brief ID;
+   - design concept and exact visual direction;
+   - intended audience and emotional/click hook;
+   - image-generation prompt seed;
+   - ad-copy angle;
+   - what prior metrics or learnings support it, if any;
+   - known risks: genericness, policy, audience mismatch, text-rendering risk, or weak differentiation.
+
+7. **Preserve rejected options.** Record rejected ideas with one-line reasons, especially minority ideas that could become useful if current winners fail.
+
+## Artifact
+
+Run `session_lineage` with `include_xml=false`. You will get JSON like:
+
+```json
+{ "root_team_key": "2026-05-31-18-12-t-ai", "path": "root/branch-01/brainstorm", "agent_name": "brainstorm" }
+```
+
+Write `report.md` at `artifacts/{root_team_key}/{path}/report.md`. Include context read, pitch artifact paths, debate artifact paths, ranked briefs, dissenting views, rejected options with reasons, assumptions, metrics/learnings used, and what was not explored. State observations and evidence boundaries, not certainty. Then message your caller with the artifact path and the top K brief IDs.
 
 ## Edge Cases
 
-- **Deep disagreement after max waves:** escalate to your caller with the competing views. They have context you don't.
-- **One agent found something nobody else did:** flag it prominently. This is the recall problem being solved.
-- **Needs information nobody has:** report as inconclusive with what information is missing.
-- **A model is unavailable:** fall back to another provider. The goal is diverse reasoning, not a specific model.
+- **No metrics yet:** say the briefs are seeded by audience/creative priors, not performance evidence.
+- **Prior learnings conflict:** preserve both interpretations and explain what metric or follow-up would distinguish them.
+- **All ideas cluster together:** run another mini-wave with deliberately different creative domains before writing the final artifact.
+- **A weird minority idea has high upside:** keep it visible even if not top-ranked.
+- **Unable to follow this procedure:** report the blocker to your caller immediately.
 
 ## DON'Ts
 
-- DON'T converge prematurely. Disagreement is information.
-- DON'T dismiss minority views.
-- DON'T let the synthesizer just concatenate findings. It must integrate and rank.
-- DON'T let all agents explore the same conceptual space.
-- DON'T use the same model for all forks — diversity of reasoning is the point.
+- DON'T launch ads, generate final images, or fetch Facebook metrics.
+- DON'T return more than the caller/Router can afford to spawn.
+- DON'T bury dissent or rare ideas in a long unranked list.
+- DON'T output generic shirt ideas without audience hook and visual direction.
+- DON'T message your caller without an artifact path.
