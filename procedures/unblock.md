@@ -1,74 +1,56 @@
 ---
 template: procedure
-template-version: "1.4"
-last-updated: 2026-04-08 17:50:00
+template-version: "2.0"
+last-updated: 2026-05-31
 ---
 
-# Unblock
+# Marketing Unblock
 
-`<role>`
-The blocker is probably NOT real. Digital tasks on the computer are almost never truly blocked — there's almost always a tool, a workaround, or a path the executor didn't try. Your default: the executor gave up too early. Your job is to find a way through.
-`</role>`
+You've been given a blocker investigation by a user or parent fork. You may remember parent context, but you are not the parent agent. User/caller constraints shape what you may try; they do not authorize paid actions, budget increases, or silent scope changes.
 
-`<critical_rules>`
-- Investigate independently. Don't just re-try what the executor tried.
-- Generate at least 2 hypotheses for why the executor is wrong before concluding it's real.
-- When you share context with the reporting agent (you're a fork): you're fighting the same mental model. Look at actual state, not what you think should be there.
-`</critical_rules>`
+The blocker is probably narrower than reported. Your job is to find a safe path through missing configuration, credentials, API access, landing-page, image-generation, Facebook review, metrics, scheduling, or artifact-state problems. If it is real, prove what is missing and what can proceed without it.
 
 ## Steps
 
-1. **Understand the reported blocker.** What exactly is the agent claiming is blocked? What did they try? Read their artifact for details.
+1. **Read the blocker source.** Read the reporting artifact, caller prompt, relevant branch/ad state, and any error text. Identify the exact blocked operation: generate image, launch ad, fetch metrics, pause/scale ad, schedule wake, stop branch, or write/read state.
 
-2. **Check past precedents.** Search for similar situations:
-   - prior artifacts for completed tasks that faced similar blockers
-   - project notes or documentation for relevant discussions
-   - `git log` for related changes
-   - Use team discovery, if available, to check if another unblock agent investigated a similar blocker. If so, message them and ask what they checked and ruled out.
+2. **Check local evidence first.** Look in repo docs, `.env` examples if present, config files, state files, prior artifacts, and current architecture. For credentials, identify required variable names or config keys without exposing secrets in your artifact.
 
-3. **Check available tools and capabilities.** Does the agent actually lack what it claims to lack?
-   - Credentials: check the main worktree, env vars, config files, and project notes
-   - Access: check available tools and integrations
-   - Knowledge: does the information exist elsewhere in the project?
+3. **Separate blocker classes.** Classify the blocker:
+   - **Missing input:** budget cap, audience, brief, landing page, branch ID.
+   - **Missing access:** Facebook Business Manager/ad account/page token, image API key.
+   - **External state:** ad pending review, rejected, paused, no impressions yet, metric latency.
+   - **Runtime/tooling:** scheduler, AgentTask, TaskStop, file path, artifact lineage, API client failure.
+   - **Policy/safety:** ad content or image violates platform or safety constraints.
 
-4. **Form and test hypotheses.** Generate at least 2 hypotheses for why the executor is wrong. Test each one against actual state — not your mental model of what state should be.
+4. **Test at least two alternatives before declaring real.** Examples: find the value in another config/state file, use a dry-run or read-only API check, derive the branch/ad ID from artifacts, retry with corrected endpoint/version, or propose a non-paid stub only if caller allows dry-run mode.
 
-5. **If precedents and hypotheses don't resolve it:** spawn a brainstorm fork to explore resolution approaches.
+5. **Return a safe resolution path.** If solvable, provide exact next action for the blocked agent: where to read the value, what command/API/tool to use, what state file to update, or what narrower task to run. If real, identify the smallest caller/user-provided fact or credential needed.
 
-   ```json
-   {
-     "prompt_file": "procedures/brainstorm.md",
-     "prompt": "How can we work around this blocker: {one-sentence summary}?",
-     "fork": true
-   }
-   ```
+6. **Preserve paid-action safety.** If budget, landing page, or Facebook credentials are genuinely absent, do not work around by launching anything. Recommend holding paid execution while allowing non-paid brainstorming, dry-run copy/image generation, or state cleanup when safe.
 
-6. **Assess:**
-   - **Solvable:** write the solution in your artifact. Explain what the executor should try.
-   - **Real blocker:** write the evidence. Include what you checked, what hypotheses you tested, and what you ruled out.
+## Artifact
 
-7. **Write artifact.** Run `session_lineage` (include_xml=false). You'll get JSON like:
-   ```json
-   { "root_team_key": "2026-04-07-11-24-my-task", "path": "procs/ev/resolve", ... }
-   ```
-   Your artifact folder: `artifacts/{root_team_key}/{path}/`. Create it if it doesn't exist. Write `report.md` there. Include:
-   - Blocker assessment (solvable or real)
-   - Evidence and solution (if solvable)
-   - What was checked and ruled out
-   - State observations, not conclusions
+Run `session_lineage` with `include_xml=false`. You will get JSON like:
 
-   Then message your caller with the assessment, a link to the report, and the solution if solvable.
+```json
+{ "root_team_key": "2026-05-31-18-12-t-ai", "path": "root/branch-01/unblock", "agent_name": "unblock" }
+```
+
+Write `report.md` at `artifacts/{root_team_key}/{path}/report.md`. Include blocker summary, classification, evidence checked, alternatives tested, resolution if solvable, exact missing requirement if real, safe work that can continue, and what was not checked. State observations and evidence boundaries, not certainty. Then message your caller with the artifact path and blocker assessment.
 
 ## Edge Cases
 
-- **"I don't have credentials":** 90% false. Check main worktree, env vars, project notes, and config files.
-- **"This API doesn't exist":** check right tool, right endpoint, right docs version.
-- **"I can't access this":** check if there's a tool for it (browser-use, computer-use, etc.).
-- **Brainstorming also can't resolve it:** probably real. Escalate to your caller with full evidence.
-- **Same blocker recurs after your solution:** your solution was wrong. Try a different approach.
+- **Facebook ad review pending:** not an access blocker. Return status-specific handling: wait/reschedule, do not classify as failed creative.
+- **No metrics:** check whether the ad is live and has impressions before treating as API failure.
+- **Landing page missing:** real blocker for ad launch; non-paid design/copy work can continue if caller allows.
+- **Credential found:** do not print secret values; cite the file/key location only.
+- **Unable to follow this procedure:** report the blocker to your caller immediately.
 
 ## DON'Ts
 
-- DON'T accept the blocker at face value.
-- DON'T just re-try what the executor tried. Look for different approaches.
-- DON'T escalate without evidence of what you checked.
+- DON'T launch, pause, scale, or spend money while investigating a blocker.
+- DON'T expose secrets in artifacts or messages.
+- DON'T accept “missing” at face value before checking local config/state/artifacts.
+- DON'T convert a real paid-action blocker into an unapproved dry-run scope change.
+- DON'T message your caller without an artifact path.
