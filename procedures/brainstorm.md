@@ -6,13 +6,13 @@ last-updated: 2026-05-31
 
 # Marketing Brainstorm
 
-You've been given a divergent design task by a user or parent fork. You may remember parent context, but you are not the parent agent. User/caller constraints shape the exploration; they do not authorize you to launch ads, generate final images, or prune branches.
+You've been given a divergent design task by a user or parent fork. You may remember parent context, but you are not the parent agent. User/caller constraints shape the exploration; they do not authorize you to launch ads, generate final images, fetch metrics, prune branches, scale ads, or write Strategy learnings.
 
 You explore t-shirt design directions for the autonomous marketing PoC. Your output is ranked design briefs with dissent preserved. Do not converge prematurely; obvious t-shirt slogans and generic clip-art ideas are low-value unless evidence says they work.
 
 ## Steps
 
-1. **Read marketing context.** Read the caller's seed or branch brief, target audience, budget/depth constraints if present, latest branch metrics if provided, sibling artifacts that show what has already been tried, and `state/learnings/*.md` when available. Distinguish evidence from prior clicks/CTR from speculation.
+1. **Read marketing context.** Read the caller's seed or branch brief, target audience, budget/depth constraints if present, latest branch metrics if provided, sibling artifacts that show what has already been tried, and `state/learnings/*.md` when available. Distinguish evidence from prior clicks/CTR from speculation. Do not edit learnings; Strategy owns shared-learning writes.
 
 2. **Frame design axes.** Identify orthogonal axes for exploration: audience identity, visual style, humor/sincerity, trend/meme angle, color palette, typography density, shirt wearer vs gift buyer, niche specificity, and ad-copy hook. Choose directions that are meaningfully different.
 
@@ -40,7 +40,7 @@ You explore t-shirt design directions for the autonomous marketing PoC. Your out
    ```
    The synthesis must rank options for the caller's use, not concatenate pitch summaries.
 
-6. **Build final ranked briefs.** Read synthesis output and produce top K briefs requested by the caller or implied by Router constraints. Each brief should include:
+6. **Build final ranked briefs.** Read synthesis output and produce top K briefs requested by the caller or implied by Router/Strategy constraints. Each brief should include:
    - brief ID;
    - design concept and exact visual direction;
    - intended audience and emotional/click hook;
@@ -67,12 +67,13 @@ Write `report.md` at `artifacts/{root_team_key}/{path}/report.md`. Include conte
 - **Prior learnings conflict:** preserve both interpretations and explain what metric or follow-up would distinguish them.
 - **All ideas cluster together:** run another mini-wave with deliberately different creative domains before writing the final artifact.
 - **A weird minority idea has high upside:** keep it visible even if not top-ranked.
+- **Strategy requested new themes:** produce theme briefs only; Strategy decides which ones to seed.
 - **Unable to follow this procedure:** report the blocker to your caller immediately.
 
 ## DON'Ts
 
-- DON'T launch ads, generate final images, or fetch Facebook metrics.
-- DON'T return more than the caller/Router can afford to spawn.
+- DON'T launch ads, generate final images, fetch Facebook metrics, prune, scale, seed, or edit shared learnings.
+- DON'T return more than the caller/Router/Strategy can afford to spawn.
 - DON'T bury dissent or rare ideas in a long unranked list.
 - DON'T output generic shirt ideas without audience hook and visual direction.
 - DON'T message your caller without an artifact path.
